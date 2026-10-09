@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import networkx as nx
 import streamlit as st
+
 # Make the project root importable
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -16,7 +17,7 @@ from backend.network_engine.storage import (
     list_saved_networks,
     load_network,
 )
-
+from backend.network_engine.routing import find_best_route
 init_db()
 from backend.network_engine.topology import (
     create_network,
@@ -68,6 +69,7 @@ with save_col:
         except (ValueError, TypeError) as error:
             st.error(str(error))
 
+
 with load_col:
     saved_names = list_saved_networks()
 
@@ -75,30 +77,48 @@ with load_col:
         with st.form("load_network_form"):
             selected_name = st.selectbox(
                 "Choose a saved network",
-                saved_names
+                saved_names,
+                key="saved_network_choice",
             )
             load_clicked = st.form_submit_button("Load network")
 
-        if load_clicked:
-            try:
-                st.session_state.network = load_network(
-                    selected_name
-                )
-                st.success(f"Loaded '{selected_name}'!")
-                st.rerun()
-            except ValueError as error:
-                st.error(str(error))
-    else:
-        st.info(
-            "No saved networks yet. Create and save one first."
-        )
+        
+    if load_clicked:
+        try:
+            loaded_network = load_network(selected_name)
 
-st.divider()
+            # Show what was actually retrieved from SQLite
+            st.write("DEBUG — Loaded network:", selected_name)
+            st.write("DEBUG — Routers:", list(loaded_network.nodes))
+            st.write("DEBUG — Links:", list(loaded_network.edges(data=True)))
+
+            # Replace the current graph
+            st.session_state.network = loaded_network
+
+            # Clear the old route result
+            st.session_state.pop("route_result", None)
+            st.session_state.pop("route_request", None)
+
+            st.success(
+                f"Loaded '{selected_name}': "
+                f"{loaded_network.number_of_nodes()} routers and "
+                f"{loaded_network.number_of_edges()} links."
+            )
+
+        except Exception as error:
+            st.error(f"Loading failed: {type(error).__name__}: {error}")
+
+
+        except (ValueError, TypeError, KeyError) as error:
+            st.error(f"Could not load network: {error}")
+    else:
+        st.info("No saved networks yet. Create and save one first.")
+
 
 
 network = st.session_state.network
 
-# ---------- ADD ROUTER ----------
+# ADD ROUTER 
 st.header("1. Add a router")
 
 with st.form("add_router_form", clear_on_submit=True):
@@ -121,7 +141,7 @@ routers = sorted(network.nodes)
 
 st.divider()
 
-# ---------- ADD LINK ----------
+# ADD LINK 
 st.header("2. Connect two routers")
 
 if len(routers) < 2:
@@ -177,7 +197,7 @@ else:
 
 st.divider()
 
-# ---------- REMOVE LINK ----------
+# REMOVE LINK 
 st.header("3. Remove a link")
 
 edges = list(network.edges)
@@ -210,7 +230,7 @@ else:
 
 st.divider()
 
-# ---------- REMOVE ROUTER ----------
+#  REMOVE ROUTER 
 st.header("4. Remove a router")
 
 routers = sorted(network.nodes)
@@ -235,8 +255,86 @@ else:
 
 st.divider()
 
-# ---------- NETWORK VISUALIZATION ----------
+# ROUTE FINDER
+st.divider()
+st.header("6. Find the best route")
+st.write(
+    "Choose a source and destination to find the "
+    "lowest-cost route using working links."
+)
+
+routers = sorted(network.nodes)
+
+if len(routers) < 2:
+    st.info("Add at least two routers to find a route.")
+else:
+    with st.form("find_route_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            source = st.selectbox(
+                "Source router",
+                routers,
+                key="route_source",
+            )
+
+        with col2:
+            destination = st.selectbox(
+                "Destination router",
+                routers,
+                index=1,
+                key="route_destination",
+            )
+
+        find_route_clicked = st.form_submit_button(
+            "Find Best Route"
+        )
+
+    if find_route_clicked:
+        result = find_best_route(
+            network,
+            source,
+            destination,
+        )
+
+        st.session_state.route_result = result
+        st.session_state.route_request = (
+            source,
+            destination,
+        )
+
+    # Display the most recent route result
+    if "route_result" in st.session_state:
+        result = st.session_state.route_result
+        route_source, route_destination = (
+            st.session_state.route_request
+        )
+
+        st.subheader(
+            f"Route: {route_source} → {route_destination}"
+        )
+
+        if result["status"] == "success":
+            st.success(result["message"])
+
+            st.metric(
+                "Total routing cost",
+                result["total_cost"],
+            )
+
+            st.write("**Selected path**")
+            st.code(" → ".join(result["path"]))
+
+        elif result["status"] == "unreachable":
+            st.warning(result["message"])
+
+        else:
+            st.error(result["message"])
+
+#  NETWORK VISUALIZATION 
 st.header("5. Network visualization")
+
+
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Routers", network.number_of_nodes())
@@ -250,17 +348,51 @@ if network.number_of_nodes() == 0:
     st.info("Your network is empty. Add a router to begin.")
 else:
     positions = nx.spring_layout(network, seed=42)
-
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    nx.draw_networkx(
-        network,
-        positions,
-        ax=ax,
-        node_color="#72B7B2",
-        node_size=1800,
-        font_size=10,
-        font_weight="bold",
+    # Retrieve the latest route result, if one exists
+    result = st.session_state.get("route_result", {})
+    route = result.get("path", [])
+    route_edges = {
+        frozenset((route[i], route[i + 1]))
+        for i in range(len(route) - 1)
+    } if result.get("status") == "success" else set()
+
+    # Separate selected-route links from the other links
+    normal_edges = [
+        (a, b)
+        for a, b in network.edges()
+        if frozenset((a, b)) not in route_edges
+    ]
+
+    selected_edges = [
+        (a, b)
+        for a, b in network.edges()
+        if frozenset((a, b)) in route_edges
+    ]
+
+    nx.draw_networkx_nodes(
+        network, positions, ax=ax,
+        node_color="#72B7B2", node_size=1800
+    )
+
+    nx.draw_networkx_labels(
+        network, positions, ax=ax,
+        font_size=10, font_weight="bold"
+    )
+
+    # Draw ordinary links in grey
+    nx.draw_networkx_edges(
+        network, positions, ax=ax,
+        edgelist=normal_edges,
+        edge_color="gray", width=1.8
+    )
+
+    # Highlight the chosen route in green
+    nx.draw_networkx_edges(
+        network, positions, ax=ax,
+        edgelist=selected_edges,
+        edge_color="green", width=4
     )
 
     edge_labels = {
@@ -272,24 +404,19 @@ else:
     }
 
     nx.draw_networkx_edge_labels(
-        network,
-        positions,
-        edge_labels=edge_labels,
-        ax=ax,
-        font_size=8,
+        network, positions, edge_labels=edge_labels,
+        ax=ax, font_size=8
     )
 
-    ax.set_title("SentinelRoute Network")
+    ax.set_title("SentinelRoute Network — Selected Route in Green")
     ax.axis("off")
-
     st.pyplot(fig)
     plt.close(fig)
 
     st.subheader("Router inventory")
-    st.write(routers)
+    st.write(sorted(network.nodes))
 
     st.subheader("Link inventory")
-
     if network.number_of_edges() == 0:
         st.write("No connections created yet.")
     else:
