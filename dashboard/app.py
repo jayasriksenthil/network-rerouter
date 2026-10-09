@@ -5,12 +5,19 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import networkx as nx
 import streamlit as st
-
 # Make the project root importable
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from backend.network_engine.storage import (
+    init_db,
+    save_network,
+    list_saved_networks,
+    load_network,
+)
+
+init_db()
 from backend.network_engine.topology import (
     create_network,
     add_router,
@@ -34,6 +41,60 @@ st.write(
 # Initialize one graph per browser session
 if "network" not in st.session_state:
     st.session_state.network = create_network()
+
+
+
+st.header("Save or load a network")
+
+save_col, load_col = st.columns(2)
+
+with save_col:
+    with st.form("save_network_form"):
+        network_name = st.text_input(
+            "Network name",
+            placeholder="e.g. CampusNetwork"
+        )
+        save_clicked = st.form_submit_button("Save network")
+
+    if save_clicked:
+        try:
+            save_network(
+                network_name,
+                st.session_state.network
+            )
+            st.success(
+                f"Network '{network_name.strip()}' saved!"
+            )
+        except (ValueError, TypeError) as error:
+            st.error(str(error))
+
+with load_col:
+    saved_names = list_saved_networks()
+
+    if saved_names:
+        with st.form("load_network_form"):
+            selected_name = st.selectbox(
+                "Choose a saved network",
+                saved_names
+            )
+            load_clicked = st.form_submit_button("Load network")
+
+        if load_clicked:
+            try:
+                st.session_state.network = load_network(
+                    selected_name
+                )
+                st.success(f"Loaded '{selected_name}'!")
+                st.rerun()
+            except ValueError as error:
+                st.error(str(error))
+    else:
+        st.info(
+            "No saved networks yet. Create and save one first."
+        )
+
+st.divider()
+
 
 network = st.session_state.network
 
