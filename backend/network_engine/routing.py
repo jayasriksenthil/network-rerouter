@@ -3,10 +3,7 @@ import networkx as nx
 
 
 def find_best_route(network, source, destination):
-    """
-    Find the minimum-cost route between two routers.
-    Ignore links whose status is 'down'.
-    """
+    
 
     # 1. Validate the source and destination
     if source not in network:
