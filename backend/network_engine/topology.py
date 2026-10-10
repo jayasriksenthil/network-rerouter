@@ -3,12 +3,12 @@ import networkx as nx
 
 
 def create_network():
-    """Create an empty network."""
+    
     return nx.Graph()
 
 
 def add_router(network, router_id):
-    """Add a router dynamically."""
+    
     router_id = router_id.strip()
 
     if not router_id:
@@ -22,7 +22,7 @@ def add_router(network, router_id):
 
 
 def add_link(network, router_a, router_b, cost, capacity):
-    """Connect two existing routers dynamically."""
+    
     if router_a not in network or router_b not in network:
         raise ValueError("Add both routers before connecting them.")
 
@@ -46,7 +46,7 @@ def add_link(network, router_a, router_b, cost, capacity):
 
 
 def remove_link(network, router_a, router_b):
-    """Remove a connection dynamically."""
+    
     if not network.has_edge(router_a, router_b):
         raise ValueError("That link does not exist.")
 
